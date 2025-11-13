@@ -1,5 +1,5 @@
 {
-  "name": "jam-rooms-backend",
+  "name": "jamrooms-backend",
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
@@ -8,6 +8,6 @@
   "dependencies": {
     "express": "^4.18.2",
     "cors": "^2.8.5",
-    "ws": "^8.14.2"
+    "sqlite3": "^5.1.6"
   }
 }
