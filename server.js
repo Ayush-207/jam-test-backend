@@ -1,64 +1,216 @@
 const express = require('express');
 const cors = require('cors');
+const sqlite3 = require('sqlite3').verbose();
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-// In-memory storage for room states
-const rooms = new Map();
-
-// Get room state
-app.get('/rooms/:id/state', (req, res) => {
-  const roomId = req.params.id.toUpperCase();
-  const roomState = rooms.get(roomId);
-  
-  if (!roomState) {
-    return res.json({
-      trackUri: null,
-      positionMs: 0,
-      isPlaying: false,
-      timestamp: Date.now()
-    });
+// Initialize SQLite Database
+const db = new sqlite3.Database('./jamrooms.db', (err) => {
+  if (err) {
+    console.error('Error opening database:', err);
+  } else {
+    console.log('Connected to SQLite database');
+    initializeDatabase();
   }
-  
-  res.json(roomState);
 });
 
-// Update room state
-app.post('/rooms/:id/state', (req, res) => {
-  const roomId = req.params.id.toUpperCase();
-  const { trackUri, positionMs, isPlaying, timestamp } = req.body;
-  
-  rooms.set(roomId, {
-    trackUri,
-    positionMs,
-    isPlaying,
-    timestamp: timestamp || Date.now()
-  });
-  
-  res.json({ success: true, roomId });
-});
+function initializeDatabase() {
+  // Jam Rooms table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS jam_rooms (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT,
+      created_by TEXT NOT NULL,
+      created_by_name TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', rooms: rooms.size });
-});
+  // Mixtapes table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS mixtapes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT,
+      created_by TEXT NOT NULL,
+      created_by_name TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
-// Clean up old rooms (optional - run periodically)
-setInterval(() => {
-  const now = Date.now();
-  const ONE_HOUR = 60 * 60 * 1000;
-  
-  for (const [roomId, state] of rooms.entries()) {
-    if (now - state.timestamp > ONE_HOUR) {
-      rooms.delete(roomId);
-      console.log(`Cleaned up room: ${roomId}`);
+  // Mixtape songs table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS mixtape_songs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mixtape_id INTEGER NOT NULL,
+      track_id TEXT NOT NULL,
+      track_name TEXT NOT NULL,
+      artist_name TEXT NOT NULL,
+      album_image TEXT,
+      prompt TEXT,
+      added_by TEXT NOT NULL,
+      added_by_name TEXT NOT NULL,
+      added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (mixtape_id) REFERENCES mixtapes(id)
+    )
+  `);
+
+  // Song likes table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS song_likes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      song_id INTEGER NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(song_id, user_id),
+      FOREIGN KEY (song_id) REFERENCES mixtape_songs(id)
+    )
+  `);
+}
+
+// JAM ROOMS ENDPOINTS
+
+// Get all jam rooms
+app.get('/jamrooms', (req, res) => {
+  db.all('SELECT * FROM jam_rooms ORDER BY created_at DESC', [], (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
     }
-  }
-}, 10 * 60 * 1000); // Every 10 minutes
+    res.json(rows);
+  });
+});
+
+// Create jam room
+app.post('/jamrooms', (req, res) => {
+  const { title, description, createdBy, createdByName } = req.body;
+  
+  db.run(
+    'INSERT INTO jam_rooms (title, description, created_by, created_by_name) VALUES (?, ?, ?, ?)',
+    [title, description, createdBy, createdByName],
+    function(err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      res.json({ id: this.lastID, title, description, createdBy, createdByName });
+    }
+  );
+});
+
+// MIXTAPES ENDPOINTS
+
+// Get all mixtapes with song count
+app.get('/mixtapes', (req, res) => {
+  const query = `
+    SELECT m.*, COUNT(ms.id) as songCount
+    FROM mixtapes m
+    LEFT JOIN mixtape_songs ms ON m.id = ms.mixtape_id
+    GROUP BY m.id
+    ORDER BY m.created_at DESC
+  `;
+  
+  db.all(query, [], (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(rows);
+  });
+});
+
+// Create mixtape
+app.post('/mixtapes', (req, res) => {
+  const { title, description, createdBy, createdByName } = req.body;
+  
+  db.run(
+    'INSERT INTO mixtapes (title, description, created_by, created_by_name) VALUES (?, ?, ?, ?)',
+    [title, description, createdBy, createdByName],
+    function(err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      res.json({ id: this.lastID, title, description, createdBy, createdByName });
+    }
+  );
+});
+
+// Get mixtape songs with like counts
+app.get('/mixtapes/:id/songs', (req, res) => {
+  const { id } = req.params;
+  
+  const query = `
+    SELECT ms.*, COUNT(sl.id) as likes
+    FROM mixtape_songs ms
+    LEFT JOIN song_likes sl ON ms.id = sl.song_id
+    WHERE ms.mixtape_id = ?
+    GROUP BY ms.id
+    ORDER BY ms.added_at DESC
+  `;
+  
+  db.all(query, [id], (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(rows);
+  });
+});
+
+// Add song to mixtape
+app.post('/mixtapes/:id/songs', (req, res) => {
+  const { id } = req.params;
+  const { trackId, trackName, artistName, albumImage, prompt, addedBy, addedByName } = req.body;
+  
+  db.run(
+    `INSERT INTO mixtape_songs 
+     (mixtape_id, track_id, track_name, artist_name, album_image, prompt, added_by, added_by_name) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, trackId, trackName, artistName, albumImage, prompt, addedBy, addedByName],
+    function(err) {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      res.json({ id: this.lastID });
+    }
+  );
+});
+
+// Like a song
+app.post('/mixtapes/songs/:songId/like', (req, res) => {
+  const { songId } = req.params;
+  const { userId } = req.body;
+  
+  // Check if already liked
+  db.get('SELECT * FROM song_likes WHERE song_id = ? AND user_id = ?', [songId, userId], (err, row) => {
+    if (row) {
+      // Unlike
+      db.run('DELETE FROM song_likes WHERE song_id = ? AND user_id = ?', [songId, userId], (err) => {
+        if (err) {
+          res.status(500).json({ error: err.message });
+          return;
+        }
+        res.json({ liked: false });
+      });
+    } else {
+      // Like
+      db.run('INSERT INTO song_likes (song_id, user_id) VALUES (?, ?)', [songId, userId], (err) => {
+        if (err) {
+          res.status(500).json({ error: err.message });
+          return;
+        }
+        res.json({ liked: true });
+      });
+    }
+  });
+});
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`Jam Rooms server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
