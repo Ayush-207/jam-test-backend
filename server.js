@@ -106,7 +106,7 @@ app.post('/jamrooms', (req, res) => {
 // Get room state
 app.get('/jamrooms/:id/state', (req, res) => {
   const id = req.params.id;
-  db.get(`SELECT id, title, admin_id, track_uri FROM rooms WHERE id = ?`, [id], (err, row) => {
+  db.get(`SELECT id, title, admin_id, track_uri FROM jam_rooms WHERE id = ?`, [id], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!row) return res.status(404).json({ error: 'room not found' });
     res.json(row);
@@ -118,16 +118,16 @@ app.post('/jamrooms/:id/state', (req, res) => {
   const { track_uri, admin_id } = req.body;
   const now = Date.now();
 
-  db.get(`SELECT admin_id FROM rooms WHERE id = ?`, [id], (err, row) => {
+  db.get(`SELECT admin_id FROM jam_rooms WHERE id = ?`, [id], (err, row) => {
     if (err) return res.status(500).json({ error: err.message });
     if (!row) return res.status(404).json({ error: 'room not found' });
   
     db.run(
-      `UPDATE rooms SET track_uri = ?, admin_id = ? WHERE id = ?`,
+      `UPDATE jam_rooms SET track_uri = ?, admin_id = ? WHERE id = ?`,
       [track_uri, admin_id || row.admin_id, id],
       function (uerr) {
         if (uerr) return res.status(500).json({ error: uerr.message });
-        db.get(`SELECT id, title, admin_id, track_uri FROM rooms WHERE id = ?`, [id], (e, updatedRow) => {
+        db.get(`SELECT id, title, admin_id, track_uri FROM jam_rooms WHERE id = ?`, [id], (e, updatedRow) => {
           if (e) return res.status(500).json({ error: e.message });
           res.json(updatedRow);
         });
