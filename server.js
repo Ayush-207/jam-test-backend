@@ -23,6 +23,8 @@ function initializeDatabase() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       title TEXT NOT NULL,
       description TEXT,
+      admin_id TEXT,
+      current_track TEXT,
       created_by TEXT NOT NULL,
       created_by_name TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -84,13 +86,13 @@ app.get('/jamrooms', (req, res) => {
   });
 });
 
-// Create jam room
+
 app.post('/jamrooms', (req, res) => {
-  const { title, description, createdBy, createdByName } = req.body;
+  const { title, description, admin_id, createdBy, createdByName } = req.body;
   
   db.run(
-    'INSERT INTO jam_rooms (title, description, created_by, created_by_name) VALUES (?, ?, ?, ?)',
-    [title, description, createdBy, createdByName],
+    'INSERT INTO jam_rooms (title, description, admin_id, created_by, created_by_name) VALUES (?, ?, ?, ?, ?)',
+    [title, description, admin_id, createdBy, createdByName],
     function(err) {
       if (err) {
         res.status(500).json({ error: err.message });
@@ -99,6 +101,39 @@ app.post('/jamrooms', (req, res) => {
       res.json({ id: this.lastID, title, description, createdBy, createdByName });
     }
   );
+});
+
+// Get room state
+app.get('/jamrooms/:id/state', (req, res) => {
+  const id = req.params.id;
+  db.get(`SELECT id, title, admin_id, track_uri FROM rooms WHERE id = ?`, [id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'room not found' });
+    res.json(row);
+  });
+});
+
+app.post('/jamrooms/:id/state', (req, res) => {
+  const id = req.params.id;
+  const { track_uri, admin_id } = req.body;
+  const now = Date.now();
+
+  db.get(`SELECT admin_id FROM rooms WHERE id = ?`, [id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'room not found' });
+  
+    db.run(
+      `UPDATE rooms SET track_uri = ?, admin_id = ? WHERE id = ?`,
+      [track_uri, admin_id || row.admin_id, id],
+      function (uerr) {
+        if (uerr) return res.status(500).json({ error: uerr.message });
+        db.get(`SELECT id, title, admin_id, track_uri FROM rooms WHERE id = ?`, [id], (e, updatedRow) => {
+          if (e) return res.status(500).json({ error: e.message });
+          res.json(updatedRow);
+        });
+      }
+    );
+  });
 });
 
 // MIXTAPES ENDPOINTS
