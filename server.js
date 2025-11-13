@@ -24,7 +24,7 @@ function initializeDatabase() {
       title TEXT NOT NULL,
       description TEXT,
       admin_id TEXT,
-      current_track TEXT,
+      track_uri TEXT,
       created_by TEXT NOT NULL,
       created_by_name TEXT NOT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
